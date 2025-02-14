@@ -22,6 +22,7 @@ import androidx.viewpager.widget.ViewPager;
 import com.fongmi.android.tv.App;
 import com.fongmi.android.tv.Constant;
 import com.fongmi.android.tv.R;
+import com.fongmi.android.tv.Setting;
 import com.fongmi.android.tv.api.config.VodConfig;
 import com.fongmi.android.tv.bean.Collect;
 import com.fongmi.android.tv.bean.Site;
@@ -32,6 +33,7 @@ import com.fongmi.android.tv.ui.fragment.CollectFragment;
 import com.fongmi.android.tv.ui.presenter.CollectPresenter;
 import com.fongmi.android.tv.utils.PauseExecutor;
 import com.fongmi.android.tv.utils.ResUtil;
+import com.google.gson.reflect.TypeToken;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -46,14 +48,9 @@ public class CollectActivity extends BaseActivity {
     private View mOldView;
 
     public static void start(Activity activity, String keyword) {
-        start(activity, keyword, false);
-    }
-
-    public static void start(Activity activity, String keyword, boolean clear) {
-        Intent intent = new Intent(activity, CollectActivity.class);
-        if (clear) intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        Intent intent = new Intent(activity, CollectActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         intent.putExtra("keyword", keyword);
-        activity.startActivityForResult(intent, 1000);
+        activity.startActivity(intent);
     }
 
     private CollectFragment getFragment() {
@@ -70,9 +67,19 @@ public class CollectActivity extends BaseActivity {
     }
 
     @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        getIntent().putExtras(intent);
+        mAdapter.clear();
+        setPager();
+        search();
+    }
+
+    @Override
     protected void initView() {
         setRecyclerView();
         setViewModel();
+        saveKeyword();
         setPager();
         setSite();
         search();
@@ -124,6 +131,7 @@ public class CollectActivity extends BaseActivity {
 
     private void search() {
         mAdapter.add(Collect.all());
+        if (mExecutor != null) stop();
         mBinding.pager.getAdapter().notifyDataSetChanged();
         mExecutor = new PauseExecutor(Constant.THREAD_POOL);
         mBinding.result.setText(getString(R.string.collect_result, getKeyword()));
@@ -135,6 +143,14 @@ public class CollectActivity extends BaseActivity {
             mViewModel.searchContent(site, getKeyword(), false);
         } catch (Throwable ignored) {
         }
+    }
+
+    private void saveKeyword() {
+        List<String> items = Setting.getKeyword().isEmpty() ? new ArrayList<>() : App.gson().fromJson(Setting.getKeyword(), new TypeToken<List<String>>() {}.getType());
+        items.remove(getKeyword());
+        items.add(0, getKeyword());
+        if (items.size() > 8) items.remove(8);
+        Setting.putKeyword(App.gson().toJson(items));
     }
 
     private void stop() {
@@ -157,14 +173,6 @@ public class CollectActivity extends BaseActivity {
             mBinding.pager.setCurrentItem(mBinding.recycler.getSelectedPosition());
         }
     };
-
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (resultCode != RESULT_OK) return;
-        setResult(RESULT_OK);
-        finish();
-    }
 
     @Override
     protected void onResume() {

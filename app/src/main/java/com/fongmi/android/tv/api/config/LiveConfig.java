@@ -184,8 +184,8 @@ public class LiveConfig {
         for (JsonElement element : Json.safeListElement(object, "lives")) {
             Live live = Live.objectFrom(element);
             if (lives.contains(live)) continue;
-            live.setApi(parseApi(live.getApi()));
-            live.setExt(parseExt(live.getExt()));
+            live.setApi(UrlUtil.convert(live.getApi()));
+            live.setExt(UrlUtil.convert(live.getExt()));
             live.setJar(parseJar(live, spider));
             lives.add(live.check().sync());
         }
@@ -199,23 +199,14 @@ public class LiveConfig {
     private void initOther(JsonObject object) {
         if (home == null) setHome(lives.isEmpty() ? new Live() : lives.get(0), true);
         setRules(Rule.arrayFrom(object.getAsJsonArray("rules")));
+        setHeaders(Json.safeListElement(object, "headers"));
+        setHosts(Json.safeListString(object, "hosts"));
+        setProxy(Json.safeListString(object, "proxy"));
         setAds(Json.safeListString(object, "ads"));
     }
 
-    private String parseApi(String api) {
-        if (api.startsWith("file") || api.startsWith("assets")) return UrlUtil.convert(api);
-        return api;
-    }
-
-    private String parseExt(String ext) {
-        if (ext.startsWith("file") || ext.startsWith("assets")) return UrlUtil.convert(ext);
-        if (ext.startsWith("img+")) return Decoder.getExt(ext);
-        return ext;
-    }
-
     private String parseJar(Live live, String spider) {
-        if (live.getJar().isEmpty() && live.getApi().startsWith("csp_")) return spider;
-        return live.getJar();
+        return live.getJar().isEmpty() ? spider : live.getJar();
     }
 
     private void bootLive() {
@@ -275,9 +266,19 @@ public class LiveConfig {
     }
 
     public void setRules(List<Rule> rules) {
-        for (Rule rule : rules) if ("proxy".equals(rule.getName())) OkHttp.selector().addAll(rule.getHosts());
-        rules.remove(Rule.create("proxy"));
         this.rules = rules;
+    }
+
+    public void setHeaders(List<JsonElement> items) {
+        OkHttp.requestInterceptor().setHeaders(items);
+    }
+
+    public void setHosts(List<String> hosts) {
+        OkHttp.dns().addAll(hosts);
+    }
+
+    public void setProxy(List<String> hosts) {
+        OkHttp.selector().addAll(hosts);
     }
 
     public List<String> getAds() {

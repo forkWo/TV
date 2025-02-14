@@ -4,7 +4,6 @@ import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.Dialog;
-import android.app.PictureInPictureUiState;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
@@ -27,13 +26,11 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.annotation.RequiresApi;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentActivity;
 import androidx.lifecycle.Observer;
 import androidx.lifecycle.ViewModelProvider;
 import androidx.media3.common.C;
-import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.viewbinding.ViewBinding;
@@ -134,7 +131,6 @@ public class VideoActivity extends BaseActivity implements Clock.Callback, Custo
     private List<String> mBroken;
     private History mHistory;
     private Players mPlayers;
-    private boolean foreground;
     private boolean fullscreen;
     private boolean initTrack;
     private boolean initAuto;
@@ -144,7 +140,6 @@ public class VideoActivity extends BaseActivity implements Clock.Callback, Custo
     private boolean rotate;
     private boolean stop;
     private boolean lock;
-    private Runnable mR0;
     private Runnable mR1;
     private Runnable mR2;
     private Runnable mR3;
@@ -289,13 +284,11 @@ public class VideoActivity extends BaseActivity implements Clock.Callback, Custo
         mDialogs = new ArrayList<>();
         mBroken = new ArrayList<>();
         mClock = Clock.create();
-        mR0 = this::stopService;
         mR1 = this::hideControl;
         mR2 = this::setTraffic;
         mR3 = this::setOrient;
         mR4 = this::showEmpty;
         mPiP = new PiP();
-        setForeground(true);
         setRecyclerView();
         setVideoView();
         setViewModel();
@@ -370,10 +363,10 @@ public class VideoActivity extends BaseActivity implements Clock.Callback, Custo
 
     private void setVideoView() {
         mPlayers.init(mBinding.exo);
+        PlaybackService.start(mPlayers);
         ExoUtil.setSubtitleView(mBinding.exo);
         if (isPort() && ResUtil.isLand(this)) enterFullscreen();
         mBinding.control.action.decode.setText(mPlayers.getDecodeText());
-        mBinding.control.action.speed.setEnabled(mPlayers.canAdjustSpeed());
         mBinding.control.action.reset.setText(ResUtil.getStringArray(R.array.select_reset)[Setting.getReset()]);
         mBinding.video.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> mPiP.update(getActivity(), view));
     }
@@ -524,6 +517,7 @@ public class VideoActivity extends BaseActivity implements Clock.Callback, Custo
         mBinding.control.title.setText(getString(R.string.detail_title, mBinding.name.getText(), episode.getName()));
         mViewModel.playerContent(getKey(), flag.getFlag(), episode.getUrl());
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        mBinding.control.title.setSelected(true);
         updateHistory(episode, replay);
         showProgress();
         setMetadata();
@@ -557,6 +551,7 @@ public class VideoActivity extends BaseActivity implements Clock.Callback, Custo
         mFlagAdapter.toggle(item);
         notifyItemChanged(mEpisodeAdapter);
         mBinding.episode.scrollToPosition(mEpisodeAdapter.getPosition());
+        if (isFullscreen()) Notify.show(getString(R.string.play_ready, item.getName()));
         onRefresh();
     }
 
@@ -651,7 +646,7 @@ public class VideoActivity extends BaseActivity implements Clock.Callback, Custo
     }
 
     private void onCast() {
-        CastDialog.create().history(mHistory).video(CastVideo.get(mBinding.name.getText().toString(), mPlayers.getUrl())).fm(true).show(this);
+        CastDialog.create().history(mHistory).video(CastVideo.get(mBinding.name.getText().toString(), mPlayers.getUrl(), mPlayers.getPosition())).fm(true).show(this);
     }
 
     private void onInfo() {
@@ -680,17 +675,21 @@ public class VideoActivity extends BaseActivity implements Clock.Callback, Custo
     }
 
     private void checkNext() {
+        checkNext(true);
+    }
+
+    private void checkNext(boolean notify) {
         setR1Callback();
         Episode item = mEpisodeAdapter.getNext();
-        if (item.isActivated()) Notify.show(R.string.error_play_next);
-        else onItemClick(item);
+        if (!item.isActivated()) onItemClick(item);
+        else if (notify) Notify.show(R.string.error_play_next);
     }
 
     private void checkPrev() {
         setR1Callback();
         Episode item = mEpisodeAdapter.getPrev();
-        if (item.isActivated()) Notify.show(R.string.error_play_prev);
-        else onItemClick(item);
+        if (!item.isActivated()) onItemClick(item);
+        else Notify.show(R.string.error_play_prev);
     }
 
     private void onSetting() {
@@ -765,7 +764,7 @@ public class VideoActivity extends BaseActivity implements Clock.Callback, Custo
     }
 
     private void onDecode() {
-        mPlayers.toggleDecode(mBinding.exo);
+        mPlayers.toggleDecode();
         setR1Callback();
         setDecode();
     }
@@ -909,8 +908,8 @@ public class VideoActivity extends BaseActivity implements Clock.Callback, Custo
         mBinding.control.bottom.setVisibility(isLock() ? View.GONE : View.VISIBLE);
         mBinding.control.top.setVisibility(isLock() ? View.GONE : View.VISIBLE);
         mBinding.control.getRoot().setVisibility(View.VISIBLE);
-        checkPlayImg(mPlayers.isPlaying());
         setR1Callback();
+        checkPlayImg();
     }
 
     private void hideControl() {
@@ -997,9 +996,9 @@ public class VideoActivity extends BaseActivity implements Clock.Callback, Custo
         mHistory.setPosition(replay ? C.TIME_UNSET : mHistory.getPosition());
     }
 
-    private void checkPlayImg(boolean playing) {
-        mBinding.control.play.setImageResource(playing ? androidx.media3.ui.R.drawable.exo_icon_pause : androidx.media3.ui.R.drawable.exo_icon_play);
-        mPiP.update(this, playing);
+    private void checkPlayImg() {
+        mBinding.control.play.setImageResource(mPlayers.isPlaying() ? androidx.media3.ui.R.drawable.exo_icon_pause : androidx.media3.ui.R.drawable.exo_icon_play);
+        mPiP.update(this, mPlayers.isPlaying());
         ActionEvent.update();
     }
 
@@ -1041,8 +1040,7 @@ public class VideoActivity extends BaseActivity implements Clock.Callback, Custo
         mHistory.setDuration(duration = mPlayers.getDuration());
         if (position >= 0 && duration > 0 && !Setting.isIncognito()) App.execute(() -> mHistory.update());
         if (mHistory.getEnding() > 0 && duration > 0 && mHistory.getEnding() + position >= duration) {
-            mClock.setCallback(null);
-            checkEnded();
+            checkEnded(false);
         }
     }
 
@@ -1081,21 +1079,22 @@ public class VideoActivity extends BaseActivity implements Clock.Callback, Custo
             case PlayerEvent.PREPARE:
                 setInitTrack(true);
                 setPosition();
+                setDecode();
                 break;
             case Player.STATE_BUFFERING:
                 showProgress();
                 break;
             case Player.STATE_READY:
                 hideProgress();
-                checkPlayImg(mPlayers.isPlaying());
+                checkPlayImg();
+                mPlayers.reset();
                 break;
             case Player.STATE_ENDED:
-                checkEnded();
+                checkEnded(true);
                 break;
             case PlayerEvent.TRACK:
                 setMetadata();
                 setInitTrack();
-                mPlayers.reset();
                 setTrackVisible();
                 mClock.setCallback(this);
                 break;
@@ -1107,7 +1106,7 @@ public class VideoActivity extends BaseActivity implements Clock.Callback, Custo
     }
 
     private void setPosition() {
-        if (mHistory != null) mPlayers.seekTo(mHistory.getOpening() > 0 ? mHistory.getOpening() : mHistory.getPosition());
+        if (mHistory != null) mPlayers.seekTo(Math.max(mHistory.getOpening(), mHistory.getPosition()));
     }
 
     private void checkPortrait() {
@@ -1117,13 +1116,13 @@ public class VideoActivity extends BaseActivity implements Clock.Callback, Custo
         }
     }
 
-    private void checkEnded() {
+    private void checkEnded(boolean notify) {
         if (mBinding.control.action.loop.isActivated()) {
             onReset(true);
         } else {
             getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-            checkPlayImg(false);
-            checkNext();
+            checkNext(notify);
+            checkPlayImg();
         }
     }
 
@@ -1152,16 +1151,7 @@ public class VideoActivity extends BaseActivity implements Clock.Callback, Custo
     public void onErrorEvent(ErrorEvent event) {
         if (isRedirect()) return;
         if (mPlayers.retried()) onError(event);
-        else if (event.isExo()) onCheck(event);
         else onRefresh();
-    }
-
-    private void onCheck(ErrorEvent event) {
-        if (event.getCode() == PlaybackException.ERROR_CODE_IO_UNSPECIFIED || event.getCode() >= PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED && event.getCode() <= PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED) mPlayers.setFormat(ExoUtil.getMimeType(event.getCode()));
-        else if (event.getCode() == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) mPlayers.seekTo(C.TIME_UNSET);
-        else if (event.getCode() == PlaybackException.ERROR_CODE_DECODER_INIT_FAILED) mPlayers.init(mBinding.exo);
-        else if (event.getCode() == PlaybackException.ERROR_CODE_DECODING_FAILED && mPlayers.isHard()) onDecode();
-        else onError(event);
     }
 
     private void onError(ErrorEvent event) {
@@ -1282,24 +1272,16 @@ public class VideoActivity extends BaseActivity implements Clock.Callback, Custo
 
     private void onPaused() {
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        checkPlayImg(false);
         mPlayers.pause();
+        checkPlayImg();
     }
 
     private void onPlay() {
+        if (mHistory != null && mPlayers.isEnded()) mPlayers.seekTo(mHistory.getOpening());
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         if (!mPlayers.isEmpty() && mPlayers.isIdle()) mPlayers.prepare();
-        if (mHistory != null && mPlayers.isEnded()) setPosition();
-        checkPlayImg(true);
         mPlayers.play();
-    }
-
-    public boolean isForeground() {
-        return foreground;
-    }
-
-    public void setForeground(boolean foreground) {
-        this.foreground = foreground;
+        checkPlayImg();
     }
 
     private boolean isFullscreen() {
@@ -1387,10 +1369,6 @@ public class VideoActivity extends BaseActivity implements Clock.Callback, Custo
         adapter.notifyItemRangeChanged(0, adapter.getItemCount());
     }
 
-    private void stopService() {
-        PlaybackService.stop();
-    }
-
     @Override
     public void onCasted() {
         onPaused();
@@ -1409,7 +1387,7 @@ public class VideoActivity extends BaseActivity implements Clock.Callback, Custo
 
     @Override
     public void onSpeedUp() {
-        if (!mPlayers.isPlaying() || !mPlayers.canAdjustSpeed()) return;
+        if (!mPlayers.isPlaying()) return;
         mBinding.control.action.speed.setText(mPlayers.setSpeed(Setting.getSpeed()));
         mBinding.widget.speed.startAnimation(ResUtil.getAnim(R.anim.forward));
         mBinding.widget.speed.setVisibility(View.VISIBLE);
@@ -1506,26 +1484,13 @@ public class VideoActivity extends BaseActivity implements Clock.Callback, Custo
     }
 
     @Override
-    @RequiresApi(35)
-    public void onPictureInPictureUiStateChanged(@NonNull PictureInPictureUiState pipState) {
-        super.onPictureInPictureUiStateChanged(pipState);
-        if (pipState.isTransitioningToPip()) {
-            hideControl();
-            hideSheet();
-        }
-    }
-
-    @Override
     public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode, @NonNull Configuration newConfig) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
         if (!isFullscreen()) setVideoView(isInPictureInPictureMode);
         if (isInPictureInPictureMode) {
-            PlaybackService.start(mPlayers);
             hideControl();
             hideSheet();
         } else {
-            App.post(mR0, 1000);
-            setForeground(true);
             if (isStop()) finish();
         }
     }
@@ -1555,20 +1520,14 @@ public class VideoActivity extends BaseActivity implements Clock.Callback, Custo
     @Override
     protected void onResume() {
         super.onResume();
-        if (isForeground()) return;
         if (isRedirect()) onPlay();
-        App.post(mR0, 1000);
-        setForeground(true);
         setRedirect(false);
     }
 
     @Override
     protected void onPause() {
         super.onPause();
-        setForeground(false);
-        App.removeCallbacks(mR0);
         if (isRedirect()) onPaused();
-        else if (Setting.isBackgroundOn() && !isFinishing()) PlaybackService.start(mPlayers);
     }
 
     @Override
@@ -1598,8 +1557,8 @@ public class VideoActivity extends BaseActivity implements Clock.Callback, Custo
         mClock.release();
         mPlayers.release();
         Timer.get().reset();
-        App.post(mR0, 1000);
         RefreshEvent.history();
+        PlaybackService.stop();
         App.removeCallbacks(mR1, mR2, mR3, mR4);
         mViewModel.result.removeObserver(mObserveDetail);
         mViewModel.player.removeObserver(mObservePlayer);

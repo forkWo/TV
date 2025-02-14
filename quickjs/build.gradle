@@ -15,12 +15,16 @@ android {
     lint {
         disable 'UnsafeOptInUsageError'
     }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
 }
 
 dependencies {
     implementation project(':catvod')
-    implementation 'org.jsoup:jsoup:1.15.3'
+    implementation 'wang.harlon.quickjs:wrapper-java:2.4.4'
+    implementation 'wang.harlon.quickjs:wrapper-android:2.4.4'
     implementation 'net.sourceforge.streamsupport:android-retrofuture:1.7.4'
-    implementation(ext: 'jar', name: 'wrapper-java', group: 'fongmi', version: 'release')
-    implementation(ext: 'aar', name: 'wrapper-android-release', group: 'fongmi', version: 'release')
 }

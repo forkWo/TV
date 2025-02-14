@@ -1,5 +1,6 @@
 package com.fongmi.android.tv.player;
 
+import static androidx.media3.common.Player.COMMAND_SET_SPEED_AND_PITCH;
 import static androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON;
 import static androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER;
 
@@ -40,7 +41,6 @@ import com.fongmi.android.tv.bean.Track;
 import com.fongmi.android.tv.event.ActionEvent;
 import com.fongmi.android.tv.event.ErrorEvent;
 import com.fongmi.android.tv.event.PlayerEvent;
-import com.fongmi.android.tv.event.RefreshEvent;
 import com.fongmi.android.tv.impl.ParseCallback;
 import com.fongmi.android.tv.impl.SessionCallback;
 import com.fongmi.android.tv.player.exo.ExoUtil;
@@ -77,6 +77,7 @@ public class Players implements Player.Listener, ParseCallback {
     private MediaSessionCompat session;
     private ExoPlayer exoPlayer;
     private ParseJob parseJob;
+    private PlayerView view;
     private List<Sub> subs;
     private String format;
     private String url;
@@ -108,21 +109,22 @@ public class Players implements Player.Listener, ParseCallback {
         MediaControllerCompat.setMediaController(activity, session.getController());
     }
 
-    public void init(PlayerView exo) {
+    public void init(PlayerView view) {
         releasePlayer();
-        initExo(exo);
+        setPlayer(view);
         setMediaItem();
     }
 
-    private void initExo(PlayerView exo) {
+    private void setPlayer(PlayerView view) {
         exoPlayer = new ExoPlayer.Builder(App.get()).setLoadControl(ExoUtil.buildLoadControl()).setTrackSelector(ExoUtil.buildTrackSelector()).setRenderersFactory(ExoUtil.buildRenderersFactory(isHard() ? EXTENSION_RENDERER_MODE_ON : EXTENSION_RENDERER_MODE_PREFER)).setMediaSourceFactory(ExoUtil.buildMediaSourceFactory()).build();
         exoPlayer.setAudioAttributes(AudioAttributes.DEFAULT, true);
         exoPlayer.addAnalyticsListener(new EventLogger());
         exoPlayer.setHandleAudioBecomingNoisy(true);
-        exo.setRender(Setting.getRender());
+        view.setRender(Setting.getRender());
         exoPlayer.setPlayWhenReady(true);
         exoPlayer.addListener(this);
-        exo.setPlayer(exoPlayer);
+        view.setPlayer(exoPlayer);
+        this.view = view;
     }
 
     public ExoPlayer get() {
@@ -176,6 +178,10 @@ public class Players implements Player.Listener, ParseCallback {
         return exoPlayer == null ? 0 : exoPlayer.getVideoSize().height;
     }
 
+    public int getRetry() {
+        return retry;
+    }
+
     public float getSpeed() {
         return exoPlayer == null ? 1.0f : exoPlayer.getPlaybackParameters().speed;
     }
@@ -194,10 +200,6 @@ public class Players implements Player.Listener, ParseCallback {
 
     public boolean retried() {
         return ++retry > 2;
-    }
-
-    public boolean canAdjustSpeed() {
-        return !Setting.isTunnel();
     }
 
     public boolean haveTrack(int type) {
@@ -221,15 +223,19 @@ public class Players implements Player.Listener, ParseCallback {
     }
 
     public boolean isLive() {
-        return getDuration() < 3 * 60 * 1000 || exoPlayer.isCurrentMediaItemLive();
+        return getDuration() < 60 * 1000 || exoPlayer.isCurrentMediaItemLive();
     }
 
     public boolean isVod() {
-        return getDuration() > 3 * 60 * 1000 && !exoPlayer.isCurrentMediaItemLive();
+        return getDuration() > 60 * 1000 && !exoPlayer.isCurrentMediaItemLive();
     }
 
     public boolean isHard() {
         return decode == HARD;
+    }
+
+    public boolean isSoft() {
+        return decode == SOFT;
     }
 
     public boolean isPortrait() {
@@ -249,7 +255,8 @@ public class Players implements Player.Listener, ParseCallback {
     }
 
     public String setSpeed(float speed) {
-        if (exoPlayer != null && !Setting.isTunnel()) exoPlayer.setPlaybackSpeed(speed);
+        if (exoPlayer == null || !exoPlayer.isCommandAvailable(COMMAND_SET_SPEED_AND_PITCH)) return getSpeedText();
+        exoPlayer.setPlaybackParameters(exoPlayer.getPlaybackParameters().withSpeed(speed));
         return getSpeedText();
     }
 
@@ -278,10 +285,10 @@ public class Players implements Player.Listener, ParseCallback {
         return setSpeed(speed);
     }
 
-    public void toggleDecode(PlayerView exo) {
+    public void toggleDecode() {
         decode = isHard() ? SOFT : HARD;
         Setting.putDecode(decode);
-        init(exo);
+        init(view);
     }
 
     public String getPositionTime(long time) {
@@ -305,6 +312,11 @@ public class Players implements Player.Listener, ParseCallback {
         if (exoPlayer != null) exoPlayer.seekTo(time);
     }
 
+    public void seekToDefaultPosition() {
+        if (exoPlayer != null) exoPlayer.seekToDefaultPosition();
+        prepare();
+    }
+
     public void prepare() {
         if (exoPlayer != null) exoPlayer.prepare();
     }
@@ -318,8 +330,8 @@ public class Players implements Player.Listener, ParseCallback {
     }
 
     public void stop() {
-        if (parseJob != null) parseJob.stop();
         if (exoPlayer != null) exoPlayer.stop();
+        stopParse();
     }
 
     public void release() {
@@ -332,19 +344,18 @@ public class Players implements Player.Listener, ParseCallback {
     }
 
     private void releasePlayer() {
-        if (exoPlayer == null) return;
-        exoPlayer.removeListener(this);
-        exoPlayer.release();
+        if (exoPlayer != null) exoPlayer.release();
+        if (view != null) view.setPlayer(null);
         exoPlayer = null;
     }
 
     public void start(Channel channel, int timeout) {
         if (channel.hasMsg()) {
             ErrorEvent.extract(channel.getMsg());
-        } else if (channel.getParse() == 1) {
-            startParse(channel.result(), false);
         } else if (isIllegal(channel.getUrl())) {
             ErrorEvent.url();
+        } else if (channel.getParse() == 1) {
+            startParse(channel.result(), false);
         } else if (channel.getDrm() != null && !FrameworkMediaDrm.isCryptoSchemeSupported(channel.getDrm().getUUID())) {
             ErrorEvent.drm();
         } else {
@@ -355,10 +366,10 @@ public class Players implements Player.Listener, ParseCallback {
     public void start(Result result, boolean useParse, int timeout) {
         if (result.hasMsg()) {
             ErrorEvent.extract(result.getMsg());
-        } else if (result.getParse(1) == 1 || result.getJx() == 1) {
-            startParse(result, useParse);
         } else if (isIllegal(result.getRealUrl())) {
             ErrorEvent.url();
+        } else if (result.getParse(1) == 1 || result.getJx() == 1) {
+            startParse(result, useParse);
         } else if (result.getDrm() != null && !FrameworkMediaDrm.isCryptoSchemeSupported(result.getDrm().getUUID())) {
             ErrorEvent.drm();
         } else {
@@ -389,8 +400,7 @@ public class Players implements Player.Listener, ParseCallback {
     }
 
     private void setMediaItem() {
-        if (url == null) RefreshEvent.player();
-        else setMediaItem(headers, url, format, drm, subs, Constant.TIMEOUT_PLAY);
+        if (url != null) setMediaItem(headers, url, format, drm, subs, Constant.TIMEOUT_PLAY);
     }
 
     public void setMediaItem(String url) {
@@ -448,6 +458,8 @@ public class Players implements Player.Listener, ParseCallback {
         String host = UrlUtil.host(uri);
         String scheme = UrlUtil.scheme(uri);
         if ("data".equals(scheme)) return false;
+        if (url.startsWith("json:")) return false;
+        if (url.startsWith("parse:")) return false;
         return scheme.isEmpty() || "file".equals(scheme) ? !Path.exists(url) : host.isEmpty();
     }
 
@@ -570,6 +582,26 @@ public class Players implements Player.Listener, ParseCallback {
     @Override
     public void onPlayerError(@NonNull PlaybackException error) {
         Logger.t(TAG).e(error.errorCode + "," + url);
-        ErrorEvent.url(error.errorCode);
+        if (retried()) ErrorEvent.extract(error.getErrorCodeName());
+        else switch (error.errorCode) {
+            case PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW:
+                seekToDefaultPosition();
+                break;
+            case PlaybackException.ERROR_CODE_DECODER_INIT_FAILED:
+            case PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED:
+            case PlaybackException.ERROR_CODE_DECODING_FAILED:
+                toggleDecode();
+                break;
+            case PlaybackException.ERROR_CODE_IO_UNSPECIFIED:
+            case PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED:
+            case PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED:
+            case PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED:
+            case PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED:
+                setFormat(ExoUtil.getMimeType(error.errorCode));
+                break;
+            default:
+                ErrorEvent.extract(error.getErrorCodeName());
+                break;
+        }
     }
 }

@@ -92,6 +92,7 @@
     <string name="player_scale">Scale</string>
     <string name="player_caption">Caption style</string>
     <string name="player_background">Background play</string>
+    <string name="player_audio_decode">Audio software decode</string>
     <string name="player_tunnel">Tunnel mode</string>
     <string name="player_buffer">Buffer time</string>
     <string name="player_speed">Press speed</string>
@@ -119,7 +120,6 @@
     <string name="error_play_prev">It\'s the first episode!</string>
     <string name="error_play_parse">Unable to parse url</string>
     <string name="error_play_drm_scheme">This device does not support the required DRM scheme</string>
-    <string name="error_play_url_code">Unable to load url\nError code: <xliff:g name="name">%s</xliff:g></string>
     <string name="error_play_code">Error code: <xliff:g name="name">%s</xliff:g></string>
     <string name="error_play_url">Unable to load url</string>
     <string name="error_play_flag">No flag data</string>

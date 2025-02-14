@@ -1,7 +1,5 @@
 package com.github.catvod.net.interceptor;
 
-import android.net.Uri;
-
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
@@ -9,11 +7,14 @@ import com.github.catvod.utils.Util;
 import com.google.common.net.HttpHeaders;
 
 import java.io.IOException;
+import java.net.URI;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.zip.Inflater;
 import java.util.zip.InflaterInputStream;
 
 import okhttp3.Interceptor;
 import okhttp3.MediaType;
+import okhttp3.Request;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
 import okio.BufferedSource;
@@ -21,25 +22,31 @@ import okio.Okio;
 
 public class ResponseInterceptor implements Interceptor {
 
+    private final ConcurrentHashMap<String, String> redirect;
+
+    public ResponseInterceptor() {
+        this.redirect = new ConcurrentHashMap<>();
+    }
+
     @NonNull
     @Override
     public Response intercept(@NonNull Chain chain) throws IOException {
-        Response response = chain.proceed(chain.request());
-        String location = response.header(HttpHeaders.LOCATION);
-        String encoding = response.header(HttpHeaders.CONTENT_ENCODING);
-        if (response.isRedirect() && location != null) checkAuth(response, location);
-        if (response.body() != null && "deflate".equals(encoding)) return deflate(response);
+        Request request = chain.request();
+        Response response = chain.proceed(checkUser(request));
+        if ("deflate".equals(response.header(HttpHeaders.CONTENT_ENCODING))) return deflate(response);
+        if (response.code() == 302) redirect.put(response.header(HttpHeaders.LOCATION), request.url().toString());
+        if (response.code() == 406 && redirect.containsKey(request.url().toString())) return redirect(request, response);
         return response;
     }
 
-    private void checkAuth(Response response, String location) {
-        try {
-            Uri uri = Uri.parse(location);
-            if (uri.getUserInfo() == null) return;
-            response.header(HttpHeaders.AUTHORIZATION, Util.basic(uri.getUserInfo()));
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+    private Request checkUser(Request request) {
+        URI uri = request.url().uri();
+        if (uri.getUserInfo() == null) return request;
+        return request.newBuilder().header(HttpHeaders.AUTHORIZATION, Util.basic(uri.getUserInfo())).build();
+    }
+
+    private Response redirect(Request request, Response response) {
+        return new Response.Builder().request(request).protocol(response.protocol()).code(302).message("Found").header(HttpHeaders.LOCATION, redirect.get(request.url().toString())).build();
     }
 
     private Response deflate(Response response) {
